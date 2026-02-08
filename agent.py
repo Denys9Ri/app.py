@@ -1,31 +1,34 @@
 import os
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain.agents import initialize_agent, AgentType
+from langchain_community.tools import ShellTool
 
-# 1. Налаштовуємо клієнт для роботи з GitHub Models
-client = OpenAI(
+# Ініціалізація моделі через GitHub
+llm = ChatOpenAI(
     base_url="https://models.inference.ai.azure.com",
-    api_key=os.environ.get("GITHUB_TOKEN") # Ми візьмемо ключ із налаштувань сервера
+    api_key=os.environ.get("GITHUB_TOKEN"),
+    model_name="gpt-4o"
+)
+
+# Даємо агенту "руки" — ShellTool (доступ до команд Linux)
+shell_tool = ShellTool()
+
+tools = [shell_tool]
+
+# Створюємо агента, який вміє думати і діяти
+agent_executor = initialize_agent(
+    tools,
+    llm,
+    agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
+    verbose=True,
+    handle_parsing_errors=True
 )
 
 def ask_agent(prompt):
-    response = client.chat.completions.create(
-        messages=[
-            {
-                "role": "system", 
-                "content": "Ти — ШІ-агент OpenClaw. Ти допомагаєш власнику магазину шин R16.com.ua."
-            },
-            {
-                "role": "user", 
-                "content": prompt
-            }
-        ],
-        model="gpt-4o", # Тут можна вказати gpt-4o або Llama-3.3-70b-Instruct
-        temperature=0.7,
-        max_tokens=1000
-    )
-    
-    return response.choices[0].message.content
+    try:
+        # Додаємо інструкцію, що він МОЖЕ використовувати термінал
+        full_prompt = f"Ти — автономний агент OpenClaw. Якщо для відповіді на питання: '{prompt}' тобі потрібно виконати команду в терміналі — роби це негайно."
+        return agent_executor.run(full_prompt)
+    except Exception as e:
+        return f"Помилка агента: {str(e)}"
 
-# Перевірка
-if __name__ == "__main__":
-    print(ask_agent("Привіт! Хто ти?"))
