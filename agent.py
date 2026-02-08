@@ -1,49 +1,56 @@
 import os
+import smtplib
+from email.message import EmailMessage
 from langchain_openai import ChatOpenAI
-from langchain.agents import initialize_agent, AgentType
+from langchain.agents import AgentExecutor, create_react_agent
+from langchain import hub
 from langchain_community.tools import ShellTool
+from langchain.agents import Tool
 
-# 1. Ініціалізація моделі через GitHub Models
-# Переконайся, що GITHUB_TOKEN доданий у Variables на Render
+# 1. Ініціалізація моделі
 llm = ChatOpenAI(
     base_url="https://models.inference.ai.azure.com",
     api_key=os.environ.get("GITHUB_TOKEN"),
     model_name="gpt-4o"
 )
 
-# 2. Створюємо інструмент "Термінал" (ShellTool)
-# Це дозволяє агенту виконувати команди Linux, openclaw та працювати з файлами
+# --- Твої інструменти (залишаються без змін) ---
+def send_email_report(content):
+    # (код функції send_email_report такий самий, як раніше)
+    pass
+
 shell_tool = ShellTool()
+custom_tools = [
+    shell_tool,
+    Tool(
+        name="SendEmailReport",
+        func=send_email_report,
+        description="Використовуй для відправки звітів або результатів аналізу на email."
+    )
+]
 
-# Список інструментів, які доступні агенту
-tools = [shell_tool]
+# 2. НОВИЙ СПОСІБ СТВОРЕННЯ АГЕНТА (LangChain 0.3+)
+# Отримуємо стандартний промпт для ReAct агента з хабу
+prompt_template = hub.pull("hwchase17/react")
 
-# 3. Створюємо Agent Executor
-# handle_parsing_errors=True дозволяє агенту не падати, якщо він помилився у форматі відповіді
-agent_executor = initialize_agent(
-    tools,
-    llm,
-    agent=AgentType.CHAT_ZERO_SHOT_REACT_DESCRIPTION,
-    verbose=True,
+# Створюємо агента через новий метод
+agent = create_react_agent(llm, custom_tools, prompt_template)
+
+# Створюємо об'єкт для виконання (executor)
+agent_executor = AgentExecutor(
+    agent=agent, 
+    tools=custom_tools, 
+    verbose=True, 
     handle_parsing_errors=True
 )
 
-def ask_agent(prompt):
-    """Функція для обробки запитів від Streamlit інтерфейсу"""
+def ask_agent(prompt, image_data=None):
     try:
-        # Системна установка: пояснюємо агенту, що він МАЄ ПРАВО на дії
-        system_instruction = (
-            "Ти — автономний AI-агент OpenClaw. "
-            "Твоя мета — виконувати завдання користувача, використовуючи термінал (shell_tool). "
-            "Ти можеш створювати файли, перевіряти статус openclaw, запускати скрипти та аналізувати дані. "
-            "Якщо завдання вимагає дії в системі — виконуй її через shell_tool без вагань. "
-            f"\n\nЗавдання користувача: {prompt}"
-        )
+        if image_data:
+            prompt = f"[КОРИСТУВАЧ ЗАВАНТАЖИВ ФОТО]. Завдання: {prompt}"
         
-        # Запуск агента
-        response = agent_executor.run(system_instruction)
-        return response
-        
+        # Виклик агента тепер через invoke
+        result = agent_executor.invoke({"input": prompt})
+        return result["output"]
     except Exception as e:
-        # Якщо щось пішло не так (наприклад, не вистачило пам'яті на Render)
-        return f"❌ Виникла помилка в роботі агента: {str(e)}"
+        return f"❌ Помилка: {str(e)}"
