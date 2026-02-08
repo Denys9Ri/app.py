@@ -2,7 +2,9 @@ import os
 import smtplib
 from email.message import EmailMessage
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_react_agent
+# Новий шлях імпорту для AgentExecutor
+from langchain.agents import create_react_agent
+from langchain.agents.agent import AgentExecutor
 from langchain import hub
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
@@ -14,9 +16,9 @@ llm = ChatOpenAI(
     model_name="gpt-4o"
 )
 
-# --- Твої інструменти (залишаються без змін) ---
+# --- Твої інструменти (залишаються як були) ---
 def send_email_report(content):
-    # (код функції send_email_report такий самий, як раніше)
+    # (код функції без змін)
     pass
 
 shell_tool = ShellTool()
@@ -29,14 +31,11 @@ custom_tools = [
     )
 ]
 
-# 2. НОВИЙ СПОСІБ СТВОРЕННЯ АГЕНТА (LangChain 0.3+)
-# Отримуємо стандартний промпт для ReAct агента з хабу
+# 2. Створюємо агента за актуальним протоколом
 prompt_template = hub.pull("hwchase17/react")
-
-# Створюємо агента через новий метод
 agent = create_react_agent(llm, custom_tools, prompt_template)
 
-# Створюємо об'єкт для виконання (executor)
+# Створюємо executor
 agent_executor = AgentExecutor(
     agent=agent, 
     tools=custom_tools, 
@@ -47,9 +46,10 @@ agent_executor = AgentExecutor(
 def ask_agent(prompt, image_data=None):
     try:
         if image_data:
-            prompt = f"[КОРИСТУВАЧ ЗАВАНТАЖИВ ФОТО]. Завдання: {prompt}"
+            # Можна додати опис, що прийшло фото
+            prompt = f"[PHOTO ATTACHED] {prompt}"
         
-        # Виклик агента тепер через invoke
+        # Використовуємо invoke замість run
         result = agent_executor.invoke({"input": prompt})
         return result["output"]
     except Exception as e:
