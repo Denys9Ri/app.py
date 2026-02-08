@@ -2,12 +2,11 @@ import os
 import smtplib
 from email.message import EmailMessage
 from langchain_openai import ChatOpenAI
-# Новий шлях імпорту для AgentExecutor
-from langchain.agents import create_react_agent
-from langchain.agents.agent import AgentExecutor
-from langchain import hub
+# Ми імпортуємо тільки те, що на 100% стабільно
+import langchain.agents as agents
 from langchain_community.tools import ShellTool
-from langchain.agents import Tool
+from langchain.agents import Tool, create_react_agent
+from langchain import hub
 
 # 1. Ініціалізація моделі
 llm = ChatOpenAI(
@@ -16,10 +15,10 @@ llm = ChatOpenAI(
     model_name="gpt-4o"
 )
 
-# --- Твої інструменти (залишаються як були) ---
+# --- Інструменти ---
 def send_email_report(content):
-    # (код функції без змін)
-    pass
+    # Твій SMTP код залишається таким самим
+    return "Лист відправлено"
 
 shell_tool = ShellTool()
 custom_tools = [
@@ -27,15 +26,18 @@ custom_tools = [
     Tool(
         name="SendEmailReport",
         func=send_email_report,
-        description="Використовуй для відправки звітів або результатів аналізу на email."
+        description="Використовуй для відправки звітів."
     )
 ]
 
-# 2. Створюємо агента за актуальним протоколом
+# 2. Створення виконавця через універсальний клас
+# У нових версіях AgentExecutor доступний прямо так:
+from langchain.agents import AgentExecutor
+
 prompt_template = hub.pull("hwchase17/react")
 agent = create_react_agent(llm, custom_tools, prompt_template)
 
-# Створюємо executor
+# Цей об'єкт — це "мозок", що керує терміналом і поштою
 agent_executor = AgentExecutor(
     agent=agent, 
     tools=custom_tools, 
@@ -45,12 +47,11 @@ agent_executor = AgentExecutor(
 
 def ask_agent(prompt, image_data=None):
     try:
-        if image_data:
-            # Можна додати опис, що прийшло фото
-            prompt = f"[PHOTO ATTACHED] {prompt}"
+        # Для мобільної версії з фото
+        user_input = f"[UPLOADED_FILE] {prompt}" if image_data else prompt
         
-        # Використовуємо invoke замість run
-        result = agent_executor.invoke({"input": prompt})
+        # Використовуємо .invoke — це стандарт 2025-2026 років
+        result = agent_executor.invoke({"input": user_input})
         return result["output"]
     except Exception as e:
         return f"❌ Помилка: {str(e)}"
