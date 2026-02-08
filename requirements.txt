@@ -1,6 +1,6 @@
 streamlit
 openai
-langchain
+langchain>=0.3.0
 langchain-openai
 langchain-community
 langchainhub
