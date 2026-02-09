@@ -1,27 +1,19 @@
 FROM python:3.11-slim
 
-# Налаштування Node.js
-ENV NODE_MAJOR=20
-ENV DEBIAN_FRONTEND=noninteractive
-
+# Системні залежності для браузерів
 RUN apt-get update && apt-get install -y \
-    curl bash git gnupg \
-    && curl -fsSL https://deb.nodesource.com/setup_$NODE_MAJOR.x | bash - \
-    && apt-get install -y nodejs \
+    curl bash git nodejs npm \
+    libgbm-dev libnss3 libatk-bridge2.0-0 libgtk-3-0 libasound2 \
     && rm -rf /var/lib/apt/lists/*
-
-# Встановлюємо OpenClaw
-RUN npm install -g openclaw
-
-# АВТО-ОНБОРДИНГ
-# Ми додаємо "|| true", щоб якщо онбординг захоче щось запитати, білд не впав.
-RUN openclaw onboard --yes || echo "Onboarding completed with defaults"
-
-ENV PATH="/usr/local/bin:$PATH"
 
 WORKDIR /app
 COPY . .
+
+# Встановлюємо Python бібліотеки
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Встановлюємо браузери Playwright
+RUN playwright install chromium --with-deps
 
 EXPOSE 10000
 
