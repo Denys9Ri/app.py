@@ -1,12 +1,11 @@
 import os
-import smtplib
-from email.message import EmailMessage
+import requests
 from langchain_openai import ChatOpenAI
-# Ми імпортуємо тільки те, що на 100% стабільно
-import langchain.agents as agents
-from langchain_community.tools import ShellTool
-from langchain.agents import Tool, create_react_agent
+from langchain.agents import create_react_agent
+from langchain.agents.agent_executor import AgentExecutor
 from langchain import hub
+from langchain_community.tools import ShellTool
+from langchain.agents import Tool
 
 # 1. Ініціалізація моделі
 llm = ChatOpenAI(
@@ -15,43 +14,48 @@ llm = ChatOpenAI(
     model_name="gpt-4o"
 )
 
-# --- Інструменти ---
-def send_email_report(content):
-    # Твій SMTP код залишається таким самим
-    return "Лист відправлено"
+# --- ІНСТРУМЕНТ: ТЕЛЕГРАМ СПОВІЩЕННЯ ---
+def send_telegram_msg(message):
+    """Надсилає звіт або повідомлення в Telegram"""
+    token = os.environ.get("TG_TOKEN")
+    chat_id = os.environ.get("TG_CHAT_ID")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            return "Повідомлення в Telegram надіслано успішно!"
+        else:
+            return f"Помилка TG: {response.text}"
+    except Exception as e:
+        return f"Помилка зв'язку з TG: {str(e)}"
 
+# Реєструємо інструменти
 shell_tool = ShellTool()
 custom_tools = [
     shell_tool,
     Tool(
-        name="SendEmailReport",
-        func=send_email_report,
-        description="Використовуй для відправки звітів."
+        name="TelegramReporter",
+        func=send_telegram_msg,
+        description="Використовуй цей інструмент, щоб надіслати власнику важливу інформацію, звіти або ціни в Telegram."
     )
 ]
 
-# 2. Створення виконавця через універсальний клас
-# У нових версіях AgentExecutor доступний прямо так:
-from langchain.agents import AgentExecutor
-
+# Створення агента
 prompt_template = hub.pull("hwchase17/react")
 agent = create_react_agent(llm, custom_tools, prompt_template)
-
-# Цей об'єкт — це "мозок", що керує терміналом і поштою
-agent_executor = AgentExecutor(
-    agent=agent, 
-    tools=custom_tools, 
-    verbose=True, 
-    handle_parsing_errors=True
-)
+agent_executor = AgentExecutor(agent=agent, tools=custom_tools, verbose=True, handle_parsing_errors=True)
 
 def ask_agent(prompt, image_data=None):
     try:
-        # Для мобільної версії з фото
-        user_input = f"[UPLOADED_FILE] {prompt}" if image_data else prompt
-        
-        # Використовуємо .invoke — це стандарт 2025-2026 років
-        result = agent_executor.invoke({"input": user_input})
+        final_input = f"[IMAGE_UPLOADED] {prompt}" if image_data else prompt
+        result = agent_executor.invoke({"input": final_input})
         return result["output"]
     except Exception as e:
         return f"❌ Помилка: {str(e)}"
