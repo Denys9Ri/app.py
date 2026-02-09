@@ -7,3 +7,5 @@ langchainhub
 Pillow
 langchain-experimental
 playwright
+requests
+
