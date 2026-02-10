@@ -6,3 +6,4 @@ langchainhub
 playwright
 requests
 streamlit==1.42.0
+langchain-experimental
