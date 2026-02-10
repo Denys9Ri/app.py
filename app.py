@@ -1,86 +1,112 @@
 import streamlit as st
 from agent import ask_agent
+import base64
 
-# 1. Налаштування сторінки (Мобільний вигляд)
-st.set_page_config(
-    page_title="OpenClaw Mobile",
-    page_icon="🤖",
-    layout="centered"
-)
+# Налаштування сторінки
+st.set_page_config(page_title="R16 AI Assistant", page_icon="🤖", layout="wide")
 
-# 2. Стилізація під "Матове скло" та темну тему
+# Стилізація під Gemini (чистий та сучасний дизайн)
 st.markdown("""
     <style>
-    /* Основний фон */
+    /* Головний фон */
     .stApp {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+        background-color: #131314;
+        color: #e3e3e3;
     }
     
-    /* Ефект скла для повідомлень */
-    .stChatMessage {
-        background: rgba(255, 255, 255, 0.05) !important;
-        backdrop-filter: blur(10px);
-        border-radius: 15px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        margin-bottom: 10px;
-        padding: 10px;
+    /* Контейнер для чату */
+    .chat-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
     }
 
-    /* Адаптація під мобільні пристрої */
-    @media (max-width: 640px) {
-        .stChatMessage {
-            padding: 8px;
-            font-size: 14px;
-        }
+    /* Повідомлення користувача */
+    .user-msg {
+        background-color: #2b2a2b;
+        padding: 15px 20px;
+        border-radius: 20px;
+        margin-bottom: 20px;
+        border: 1px solid #444;
+        font-size: 1.1rem;
+        line-height: 1.5;
     }
 
-    /* Стилізація кнопок */
-    .stButton > button {
-        background: rgba(255, 255, 255, 0.1);
-        color: white;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        backdrop-filter: blur(5px);
-        width: 100%;
-        border-radius: 10px;
+    /* Повідомлення бота (Gemini Style) */
+    .bot-msg {
+        background-color: transparent;
+        padding: 15px 5px;
+        margin-bottom: 30px;
+        font-size: 1.1rem;
+        line-height: 1.6;
+        display: flex;
+        gap: 15px;
+    }
+
+    /* Аватарки або іконки */
+    .bot-icon {
+        width: 35px;
+        height: 35px;
+        background: linear_gradient(45deg, #4285f4, #9b72cb);
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+
+    /* Поле введення */
+    .stTextInput input {
+        background-color: #1e1f20 !important;
+        color: white !important;
+        border: 1px solid #5f6368 !important;
+        border-radius: 30px !important;
+        padding: 15px 25px !important;
+    }
+
+    /* Заголовок */
+    h1 {
+        font-family: 'Google Sans', sans-serif;
+        font-weight: 500;
+        text-align: center;
+        color: #ffffff;
+        margin-bottom: 40px;
     }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-st.title("🤖 OpenClaw Agent")
-st.caption("Mobile Glass Edition | AutoTalk UA")
+st.title("R16 AI Асистент")
 
-# 3. Бічна панель для медіа та функцій
-with st.sidebar:
-    st.header("🧰 Інструменти")
-    
-    # Кнопки завантаження
-    uploaded_photo = st.file_uploader("🖼 Завантажити фото", type=["jpg", "png", "jpeg"])
-    uploaded_video = st.file_uploader("🎥 Завантажити відео", type=["mp4", "mov"])
-    
-    # Голосовий ввод (імітація для веб-інтерфейсу)
-    if st.button("🎤 Голосовий ввод (ON/OFF)"):
-        st.info("Голосовий ввод активується через браузерний мікрофон...")
-
-# 4. Логіка чату
+# Ініціалізація історії чату
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Відображення повідомлень
+# Вивід історії чату
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if message["role"] == "user":
+        st.markdown(f'<div class="user-msg"><b>Ви:</b><br>{message["content"]}</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'''
+            <div class="bot-msg">
+                <div class="bot-icon"></div>
+                <div>{message["content"]}</div>
+            </div>
+        ''', unsafe_allow_html=True)
 
-# Поле вводу
-if prompt := st.chat_input("Напиши команду для лобстера..."):
-    # Додаємо повідомлення користувача
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# Поле для введення тексту
+user_input = st.chat_input("Запитайте щось у R16 Асистента...")
 
-    # Відповідь агента
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = ask_agent(prompt)
-            st.markdown(response)
+if user_input:
+    # Додаємо повідомлення користувача в історію
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    st.markdown(f'<div class="user-msg"><b>Ви:</b><br>{user_input}</div>', unsafe_allow_html=True)
     
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    with st.spinner('Агент думає...'):
+        # Отримуємо відповідь від агента (вже українською мовою)
+        response = ask_agent(user_input)
+        
+        # Додаємо відповідь бота
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.markdown(f'''
+            <div class="bot-msg">
+                <div class="bot-icon"></div>
+                <div>{response}</div>
+            </div>
+        ''', unsafe_allow_html=True)
