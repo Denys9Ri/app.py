@@ -6,12 +6,12 @@ from langchain import hub
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
 
-# 1. Ініціалізація Gemini (Використовуємо -latest версію для стабільності)
+# 1. Ініціалізація Gemini (Використовуємо стабільний підхід)
+# Ми прибираємо параметр version і залишаємо тільки модель та ключ
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash-latest", # Додано -latest
+    model="gemini-1.5-flash", 
     google_api_key=os.environ.get("GEMINI_API_KEY"),
-    version="v1", # Примусово використовуємо стабільну версію
-    temperature=0.2
+    temperature=0.1 # Зменшуємо для точності в адмінці та цінах
 )
 
 # --- ІНСТРУМЕНТ: ТЕЛЕГРАМ ---
@@ -25,7 +25,7 @@ def send_telegram_msg(message):
     
     try:
         response = requests.post(url, json=payload, timeout=10)
-        return "✅ Повідомлення надіслано!" if response.status_code == 200 else f"❌ Помилка TG: {response.text}"
+        return "✅ Надіслано!" if response.status_code == 200 else f"❌ Помилка: {response.text}"
     except Exception as e:
         return f"❌ Помилка зв'язку: {str(e)}"
 
@@ -35,7 +35,7 @@ custom_tools = [
     Tool(
         name="TelegramReporter",
         func=send_telegram_msg,
-        description="Надсилає звіти, скріншоти та аналіз цін у Telegram власнику."
+        description="Надсилає звіти та скріншоти в Telegram власнику R16."
     )
 ]
 
@@ -48,25 +48,27 @@ agent_executor = AgentExecutor(
     tools=custom_tools, 
     verbose=True, 
     handle_parsing_errors=True,
-    max_iterations=10
+    max_iterations=12 # Даємо більше часу на роздуми
 )
 
 def ask_agent(prompt):
     try:
-        # ІНСТРУКЦІЯ ДЛЯ ПЕРСОНАЛУ R16.COM.UA
+        # ІНСТРУКЦІЯ В СТИЛІ OPENCLAW ДЛЯ R16
         ua_context = (
-            "Ти — провідний ШІ-співробітник магазину R16.com.ua. Твоє ім'я — OpenClaw.\n"
-            "ДОСТУПИ ДО САЙТУ:\n"
-            "- Адмінка: https://r16.com.ua/admin/ (Логін: adminRia, Пароль: Baitrens!29)\n\n"
-            "ТВОЇ ЗАВДАННЯ:\n"
-            "1. Моніторинг конкурентів (infoshina, rezina.ua) через Playwright.\n"
-            "2. Управління адмінкою R16: перевірка замовлень та цін.\n"
+            "Ти — автономний агент OpenClaw для магазину R16.com.ua. "
+            "Твої дані: Адмінка https://r16.com.ua/admin/ (adminRia / Baitrens!29).\n"
+            "ТВОЯ СТРАТЕГІЯ:\n"
+            "1. Якщо не бачиш модель, спробуй перевірити доступ через ShellTool.\n"
+            "2. Використовуй Playwright для аналізу цін (infoshina, rezina.ua).\n"
             "3. ЗАВЖДИ відповідай українською мовою.\n"
-            "4. Використовуй ShellTool для будь-яких технічних дій."
+            "4. Якщо завдання складне — розбий його на кроки: зайти, знайти, звітувати."
         )
         
-        final_input = f"{ua_context}\n\nЗавдання користувача: {prompt}"
+        final_input = f"{ua_context}\n\nЗавдання: {prompt}"
         result = agent_executor.invoke({"input": final_input})
         return result["output"]
     except Exception as e:
+        # Якщо знову 404, виводимо зрозумілу пораду
+        if "404" in str(e):
+            return "❌ Помилка 404: Модель не знайдена. Перевір, чи вірний GEMINI_API_KEY у Render."
         return f"❌ Помилка: {str(e)}"
