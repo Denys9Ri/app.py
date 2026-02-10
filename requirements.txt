@@ -1,11 +1,8 @@
-streamlit==1.42.0
-openai
+langchain-google-genai==2.0.8
+google-generativeai==0.8.3
 langchain==0.3.7
-langchain-openai
 langchain-community
 langchainhub
-Pillow
-langchain-experimental
 playwright
 requests
-google-generativeai
+streamlit==1.42.0
