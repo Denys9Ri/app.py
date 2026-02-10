@@ -3,14 +3,14 @@ import requests
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
-from langchain_experimental.llm_bash.bash_it_base import BashProcess 
+# Виправлення імпорту для ShellTool
+from langchain_experimental.llm_bash.bash_it_base import BashProcess
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
 
-shell_tool = ShellTool()
-
+# 1. Ініціалізація Gemini 2.0 Flash (найсучасніша версія)
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-exp", # Експериментальна версія 2.0
     google_api_key=os.environ.get("GEMINI_API_KEY"),
     temperature=0.1
 )
@@ -28,17 +28,18 @@ def send_telegram_msg(message):
     except Exception as e:
         return f"❌ Помилка: {str(e)}"
 
+# Ініціалізація інструментів
 shell_tool = ShellTool()
 custom_tools = [
     shell_tool,
     Tool(
         name="TelegramReporter",
         func=send_telegram_msg,
-        description="Надсилає звіти та результати аналізу ринку в Telegram власнику R16."
+        description="Надсилає звіти та скріншоти в Telegram власнику R16."
     )
 ]
 
-# 2. Промпт та Агент
+# 2. Агент
 prompt_template = hub.pull("hwchase17/react")
 agent = create_react_agent(llm, custom_tools, prompt_template)
 agent_executor = AgentExecutor(
@@ -46,7 +47,7 @@ agent_executor = AgentExecutor(
     tools=custom_tools, 
     verbose=True, 
     handle_parsing_errors=True,
-    max_iterations=12
+    max_iterations=15
 )
 
 def ask_agent(prompt):
