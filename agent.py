@@ -3,17 +3,19 @@ import requests
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
-# Виправлення імпорту для ShellTool
-from langchain_experimental.llm_bash.bash_it_base import BashProcess
-from langchain_community.tools import ShellTool
+# Використовуємо стандартний імпорт, який тепер стабільний
+from langchain_community.tools.shell.tool import ShellTool
 from langchain.agents import Tool
 
-# 1. Ініціалізація Gemini 2.0 Flash (найсучасніша версія)
+# 1. Ініціалізація Gemini 2.0 Flash
 llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-exp", # Експериментальна версія 2.0
+    model="gemini-2.0-flash-exp",
     google_api_key=os.environ.get("GEMINI_API_KEY"),
     temperature=0.1
 )
+
+# Ініціалізація ShellTool (він сам знайде BashProcess всередині пакетів)
+shell_tool = ShellTool()
 
 # --- ІНСТРУМЕНТ: ТЕЛЕГРАМ ---
 def send_telegram_msg(message):
@@ -28,14 +30,12 @@ def send_telegram_msg(message):
     except Exception as e:
         return f"❌ Помилка: {str(e)}"
 
-# Ініціалізація інструментів
-shell_tool = ShellTool()
 custom_tools = [
     shell_tool,
     Tool(
         name="TelegramReporter",
         func=send_telegram_msg,
-        description="Надсилає звіти та скріншоти в Telegram власнику R16."
+        description="Надсилає звіти та результати аналізу ринку в Telegram власнику R16."
     )
 ]
 
