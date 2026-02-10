@@ -6,12 +6,11 @@ from langchain import hub
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
 
-# 1. Ініціалізація Gemini (Модель Flash)
-# Додано явне вказання версії v1, щоб уникнути помилки 404
+# 1. Ініціалізація Gemini (Використовуємо -latest версію для стабільності)
 llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-1.5-flash-latest", # Додано -latest
     google_api_key=os.environ.get("GEMINI_API_KEY"),
-    version="v1", 
+    version="v1", # Примусово використовуємо стабільну версію
     temperature=0.2
 )
 
@@ -49,7 +48,7 @@ agent_executor = AgentExecutor(
     tools=custom_tools, 
     verbose=True, 
     handle_parsing_errors=True,
-    max_iterations=10 # Додано для складних завдань зі скрапінгом
+    max_iterations=10
 )
 
 def ask_agent(prompt):
@@ -63,14 +62,11 @@ def ask_agent(prompt):
             "1. Моніторинг конкурентів (infoshina, rezina.ua) через Playwright.\n"
             "2. Управління адмінкою R16: перевірка замовлень та цін.\n"
             "3. ЗАВЖДИ відповідай українською мовою.\n"
-            "4. Використовуй ShellTool для будь-яких технічних дій. Якщо пишеш скрипт Playwright, завжди додавай очікування завантаження елементів."
+            "4. Використовуй ShellTool для будь-яких технічних дій."
         )
         
         final_input = f"{ua_context}\n\nЗавдання користувача: {prompt}"
         result = agent_executor.invoke({"input": final_input})
         return result["output"]
     except Exception as e:
-        # Покращена обробка помилок для діагностики
-        if "404" in str(e):
-            return "❌ Помилка: Модель не знайдена. Перевірте GEMINI_API_KEY та версію API."
-        return f"❌ Помилка агента: {str(e)}"
+        return f"❌ Помилка: {str(e)}"
