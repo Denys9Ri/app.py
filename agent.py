@@ -3,11 +3,12 @@ import requests
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
+from langchain_experimental.llm_bash.bash_it_base import BashProcess 
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
 
-# 1. Чітка ініціалізація без зайвих версій
-# Якщо ключ GEMINI_API_KEY вірний, ця модель ЗАВЖДИ доступна
+shell_tool = ShellTool()
+
 llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash",
     google_api_key=os.environ.get("GEMINI_API_KEY"),
