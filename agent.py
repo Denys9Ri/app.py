@@ -1,16 +1,16 @@
 import os
 import requests
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
 
-# 1. Ініціалізація моделі (GPT-4o-mini для швидкості та лімітів)
-llm = ChatOpenAI(
-    base_url="https://models.inference.ai.azure.com",
-    api_key=os.environ.get("GITHUB_TOKEN"),
-    model_name="gpt-4o-mini"
+# 1. Ініціалізація Gemini (Модель Flash - швидка та з великими лімітами)
+llm = ChatGoogleGenerativeAI(
+    model="gemini-1.5-flash",
+    google_api_key=os.environ.get("GEMINI_API_KEY"),
+    temperature=0.2
 )
 
 # --- ІНСТРУМЕНТ: ТЕЛЕГРАМ ---
@@ -49,19 +49,18 @@ agent_executor = AgentExecutor(
     handle_parsing_errors=True
 )
 
-def ask_agent(prompt, image_data=None):
+def ask_agent(prompt):
     try:
-        # ПОВНА ІНСТРУКЦІЯ: ВЛАСНИЙ САЙТ + КОНКУРЕНТИ
+        # ІНСТРУКЦІЯ ДЛЯ ПЕРСОНАЛУ R16.COM.UA
         ua_context = (
-            "Ти — провідний аналітик та адміністратор R16.com.ua.\n"
-            "ТВОЇ ДОСТУПИ ДО R16:\n"
+            "Ти — провідний ШІ-співробітник магазину R16.com.ua. Твоє ім'я — OpenClaw.\n"
+            "ДОСТУПИ ДО САЙТУ:\n"
             "- Адмінка: https://r16.com.ua/admin/ (Логін: adminRia, Пароль: Baitrens!29)\n\n"
-            "СТРАТЕГІЯ РОБОТИ З КОНКУРЕНТАМИ:\n"
-            "1. Якщо потрібно отримати ціни з інших сайтів (infoshina, rezina.ua тощо) — використовуй Playwright через ShellTool.\n"
-            "2. ЗАВЖДИ встановлюй реальний User-Agent, щоб сайти не блокували тебе як бота.\n"
-            "3. Якщо сайт конкурента видає помилку або капчу — зроби скріншот, надішли його власнику і спробуй зайти через іншу сторінку.\n"
-            "4. Порівнюй ціни конкурентів з цінами на R16.com.ua та пропонуй змінити ціну, якщо ми дорожчі.\n"
-            "5. ЗАВЖДИ відповідай українською мовою."
+            "ТВОЇ ЗАВДАННЯ:\n"
+            "1. Моніторинг конкурентів (infoshina, rezina.ua) через Playwright.\n"
+            "2. Управління адмінкою R16: перевірка замовлень та цін.\n"
+            "3. ЗАВЖДИ відповідай українською мовою.\n"
+            "4. Використовуй ShellTool для будь-яких технічних дій."
         )
         
         final_input = f"{ua_context}\n\nЗавдання користувача: {prompt}"
