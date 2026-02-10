@@ -5,3 +5,4 @@ langchain-community
 langchainhub
 playwright
 requests
+langchain-experimental
