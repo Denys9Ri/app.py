@@ -8,4 +8,4 @@ Pillow
 langchain-experimental
 playwright
 requests
-langchain-google-genai
+google-generativeai
