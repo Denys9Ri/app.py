@@ -6,7 +6,7 @@ from langchain import hub
 from langchain_community.tools import ShellTool
 from langchain.agents import Tool
 
-# 1. Ініціалізація моделі (GPT-4o-mini для стабільності)
+# 1. Ініціалізація моделі (GPT-4o-mini для швидкості та лімітів)
 llm = ChatOpenAI(
     base_url="https://models.inference.ai.azure.com",
     api_key=os.environ.get("GITHUB_TOKEN"),
@@ -34,7 +34,7 @@ custom_tools = [
     Tool(
         name="TelegramReporter",
         func=send_telegram_msg,
-        description="Використовуй для відправки звітів та скріншотів власнику в Telegram."
+        description="Надсилає звіти, скріншоти та аналіз цін у Telegram власнику."
     )
 ]
 
@@ -51,12 +51,17 @@ agent_executor = AgentExecutor(
 
 def ask_agent(prompt, image_data=None):
     try:
-        # Жорстка інструкція українською мовою
+        # ПОВНА ІНСТРУКЦІЯ: ВЛАСНИЙ САЙТ + КОНКУРЕНТИ
         ua_context = (
-            "Ти — професійний асистент OpenClaw для магазину шин R16.com.ua. "
-            "Твоє завдання — допомагати власнику. "
-            "ЗАВЖДИ відповідай українською мовою. "
-            "Використовуй ShellTool для запуску скриптів Playwright без вагань. "
+            "Ти — провідний аналітик та адміністратор R16.com.ua.\n"
+            "ТВОЇ ДОСТУПИ ДО R16:\n"
+            "- Адмінка: https://r16.com.ua/admin/ (Логін: adminRia, Пароль: Baitrens!29)\n\n"
+            "СТРАТЕГІЯ РОБОТИ З КОНКУРЕНТАМИ:\n"
+            "1. Якщо потрібно отримати ціни з інших сайтів (infoshina, rezina.ua тощо) — використовуй Playwright через ShellTool.\n"
+            "2. ЗАВЖДИ встановлюй реальний User-Agent, щоб сайти не блокували тебе як бота.\n"
+            "3. Якщо сайт конкурента видає помилку або капчу — зроби скріншот, надішли його власнику і спробуй зайти через іншу сторінку.\n"
+            "4. Порівнюй ціни конкурентів з цінами на R16.com.ua та пропонуй змінити ціну, якщо ми дорожчі.\n"
+            "5. ЗАВЖДИ відповідай українською мовою."
         )
         
         final_input = f"{ua_context}\n\nЗавдання користувача: {prompt}"
