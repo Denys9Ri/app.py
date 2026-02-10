@@ -1,9 +1,7 @@
+google-genai
 streamlit==1.42.0
 langchain==0.3.7
-langchain-google-genai
 langchain-community
 langchainhub
 playwright
 requests
-langchain-experimental
-google-generativeai
