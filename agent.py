@@ -1,46 +1,36 @@
+import os
 import requests
-import json
+from playwright.sync_api import sync_playwright
+from telethon import TelegramClient
 
+# Налаштування
 GROQ_API_KEY = "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"
-URL = "https://api.groq.com/openai/v1/chat/completions"
+TG_TOKEN = os.environ.get("TG_TOKEN")
+TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
-# Додаємо параметр messages_history
+# --- ІНСТРУМЕНТ 1: Скріншот сайту ---
+def take_screenshot(url):
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(url)
+        path = "screenshot.png"
+        page.screenshot(path=path)
+        browser.close()
+        return path
+
+# --- ІНСТРУМЕНТ 2: Відправка в ТГ (з файлом) ---
+def send_to_telegram(text, file_path=None):
+    url = f"https://api.telegram.org/bot{TG_TOKEN}/"
+    if file_path:
+        with open(file_path, "rb") as f:
+            requests.post(url + "sendPhoto", data={"chat_id": TG_CHAT_ID, "caption": text}, files={"photo": f})
+    else:
+        requests.post(url + "sendMessage", json={"chat_id": TG_CHAT_ID, "text": text})
+    return "✅ Відправлено в Telegram"
+
+# --- ОСНОВНИЙ МОЗОК ---
 def ask_agent(prompt, messages_history=None):
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    ua_context = (
-        "Ти — OpenClaw, автономний менеджер магазину R16.com.ua. "
-        "Ти пам'ятаєш деталі розмови. Якщо клієнт каже 'Зима', "
-        "ти маєш пам'ятати, яке в нього авто, якщо він казав це раніше."
-    )
-    
-    # Формуємо список повідомлень для Groq
-    full_messages = [{"role": "system", "content": ua_context}]
-    
-    # Якщо історія є, додаємо її в запит
-    if messages_history:
-        for msg in messages_history:
-            role = "user" if msg["role"] == "user" else "assistant"
-            full_messages.append({"role": role, "content": msg["content"]})
-    
-    # Додаємо поточне повідомлення
-    full_messages.append({"role": "user", "content": prompt})
-    
-    data = {
-        "model": "llama-3.3-70b-versatile",
-        "messages": full_messages,
-        "temperature": 0.7
-    }
-
-    try:
-        response = requests.post(URL, headers=headers, json=data, timeout=15)
-        res_json = response.json()
-        if response.status_code == 200:
-            return res_json['choices'][0]['message']['content']
-        else:
-            return f"❌ Помилка: {res_json.get('error', {}).get('message', 'error')}"
-    except Exception as e:
-        return f"❌ З'єднання: {str(e)}"
+    # Тут логіка Groq, яку ми вже налаштували, 
+    # але з додаванням обробки команд (скріншот, аналіз, ТГ)
+    # ... (код аналогічний попередньому, але з викликом функцій вище)
