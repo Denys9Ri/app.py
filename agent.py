@@ -1,11 +1,12 @@
 import os
+import re
 import requests
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from playwright.sync_api import sync_playwright
 
-# --- КОНФІГУРАЦІЯ (Беремо з Render Environment Variables) ---
+# --- КОНФІГУРАЦІЯ ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 TG_TOKEN = os.environ.get("TG_TOKEN")
@@ -14,147 +15,113 @@ GOOGLE_CREDS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+# --- ДОДАТКОВО: Функція витягування URL з тексту ---
+def extract_url_from_text(text):
+    url_pattern = r'https?://[^\s]+'
+    urls = re.findall(url_pattern, text)
+    return urls[0] if urls else None
+
 # --- ІНСТРУМЕНТ: ТЕЛЕГРАМ ---
 def send_to_tg(text, file_path=None):
-    if not TG_TOKEN or not TG_CHAT_ID:
-        return "❌ Помилка: Ключі ТГ не встановлені"
-    
+    if not TG_TOKEN or not TG_CHAT_ID: return "❌ Помилка: Немає ключів ТГ"
     url = f"https://api.telegram.org/bot{TG_TOKEN.strip()}/"
     try:
-        # Видаляємо старий файл перед відправкою, якщо він є
         if file_path and os.path.exists(file_path):
             with open(file_path, "rb") as f:
-                res = requests.post(url + "sendPhoto", data={"chat_id": TG_CHAT_ID.strip(), "caption": text[:1000]}, files={"photo": f}, timeout=15)
-            os.remove(file_path) # Очищуємо за собою
+                requests.post(url + "sendPhoto", data={"chat_id": TG_CHAT_ID.strip(), "caption": text[:1000]}, files={"photo": f}, timeout=20)
+            os.remove(file_path)
         else:
-            res = requests.post(url + "sendMessage", json={"chat_id": TG_CHAT_ID.strip(), "text": text[:4000]}, timeout=15)
-        
-        return "✅ Надіслано" if res.status_code == 200 else f"❌ ТГ помилка: {res.text}"
-    except Exception as e:
-        return f"❌ Помилка зв'язку ТГ: {str(e)}"
+            requests.post(url + "sendMessage", json={"chat_id": TG_CHAT_ID.strip(), "text": text[:4000]}, timeout=15)
+        return "✅ Надіслано"
+    except Exception as e: return f"❌ Помилка ТГ: {str(e)}"
 
-# --- ІНСТРУМЕНТ: ГЛОБАЛЬНИЙ ПОШУК (Tavily) ---
+# --- ІНСТРУМЕНТ: ПОШУК (Tavily) ---
 def global_search(query):
-    if not TAVILY_API_KEY:
-        return "❌ Ключ Tavily не знайдено", None
-    
+    if not TAVILY_API_KEY: return "❌ Немає ключа Tavily", None
     try:
-        # Уточнюємо запит, щоб ШІ не шукав калькулятори
-        refined_query = f"{query} купити шини ціна Україна -calculator"
-        url = "https://api.tavily.com/search"
-        data = {
-            "api_key": TAVILY_API_KEY.strip(),
-            "query": refined_query,
-            "search_depth": "advanced",
-            "max_results": 5
-        }
-        res = requests.post(url, json=data, timeout=20)
+        refined_query = f"{query} ціна купити україна -calculator"
+        res = requests.post("https://api.tavily.com/search", json={"api_key": TAVILY_API_KEY.strip(), "query": refined_query, "search_depth": "advanced"}, timeout=20)
         results = res.json().get("results", [])
-        
-        if not results:
-            return "Нічого не знайдено.", None
-            
-        summary = "Знайдено в мережі:\n"
-        first_url = results[0]['url'] # Беремо посилання найпершого результату
-        for r in results[:3]:
-            summary += f"- {r['title']}\n  URL: {r['url']}\n  Інфо: {r['content'][:150]}...\n\n"
-        return summary, first_url
-    except Exception as e:
-        return f"❌ Помилка пошуку: {str(e)}", None
+        if not results: return "Пусто.", None
+        summary = "\n".join([f"- {r['title']} ({r['url']}): {r['content'][:150]}..." for r in results[:3]])
+        return summary, results[0]['url']
+    except Exception as e: return f"Помилка пошуку: {e}", None
 
-# --- ІНСТРУМЕНТ: УНІВЕРСАЛЬНІ ТАБЛИЦІ ---
-def access_any_sheet(sheet_name_query, row_data=None):
-    if not GOOGLE_CREDS:
-        return "❌ Ключ Google не знайдено"
-    
-    try:
-        creds_dict = json.loads(GOOGLE_CREDS)
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        
-        all_sheets = client.openall()
-        target = None
-        # Динамічний пошук за назвою
-        for s in all_sheets:
-            if sheet_name_query.lower() in s.title.lower():
-                target = s
-                break
-        
-        if not target:
-            return f"❌ Таблицю '{sheet_name_query}' не знайдено."
-        
-        if row_data:
-            target.sheet1.append_row(row_data)
-            return f"✅ Додано в '{target.title}'"
-        return f"✅ Таблиця '{target.title}' доступна."
-    except Exception as e:
-        return f"❌ Помилка Таблиць: {str(e)}"
-
-# --- ІНСТРУМЕНТ: ДИНАМІЧНИЙ БРАУЗЕР (Playwright) ---
+# --- ІНСТРУМЕНТ: БРАУЗЕР ---
 def browse_and_screenshot(url):
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.set_viewport_size({"width": 1280, "height": 800})
-            page.goto(url, timeout=60000, wait_until="networkidle")
-            
+            # Маскуємось під звичайного користувача
+            page.set_extra_http_headers({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            page.goto(url, timeout=90000, wait_until="domcontentloaded")
+            page.wait_for_timeout(3000) # Чекаємо дозавантаження фото
             path = "web_capture.png"
-            page.screenshot(path=path)
+            page.screenshot(path=path, full_page=False)
             browser.close()
             return path
-    except Exception as e:
-        return None
+    except Exception as e: return None
 
-# --- ГОЛОВНА ЛОГІКА АГЕНТА ---
+# --- ІНСТРУМЕНТ: ТАБЛИЦІ ---
+def access_any_sheet(sheet_query, row_data=None):
+    if not GOOGLE_CREDS: return "❌ Немає ключа Google"
+    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_CREDS), ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+        client = gspread.authorize(creds)
+        all_sheets = client.openall()
+        target = next((s for s in all_sheets if sheet_query.lower() in s.title.lower()), None)
+        if not target: return "❌ Таблицю не знайдено"
+        if row_data:
+            target.sheet1.append_row(row_data)
+            return f"✅ Додано в '{target.title}'"
+        return f"✅ Таблиця '{target.title}' знайдена"
+    except Exception as e: return f"❌ Помилка Google: {e}"
+
+# --- ГОЛОВНИЙ МОЗОК ---
 def ask_agent(prompt, messages_history=None):
     ua_context = (
-        "Ти — Суперагент OpenClaw для R16.com.ua. Ти дієш автономно. "
-        "Твої інструменти: Tavily (пошук), Playwright (скріншоти) та Google Sheets. "
-        "Якщо тебе просять знайти ціни — спочатку використовуй пошук, потім зроби скріншот ЗНАЙДЕНОГО сайту. "
-        "Завжди пиши в ту таблицю, яку вказав користувач."
+        "Ти — OpenClaw, автономний бізнес-асистент. "
+        "Ти вмієш бачити інтернет, читати таблиці і надсилати файли в Telegram. "
+        "Твоє завдання: виконати команду і прозвітувати. "
+        "Ніколи не кажи 'я не можу відправити скріншот', бо це робить Python-код після твоєї відповіді."
     )
     
+    # 1. Запит до ШІ
     full_messages = [{"role": "system", "content": ua_context}]
     if messages_history:
-        for msg in messages_history:
-            full_messages.append({"role": msg["role"], "content": msg["content"]})
+        for msg in messages_history: full_messages.append(msg)
     full_messages.append({"role": "user", "content": prompt})
     
     try:
-        res = requests.post(
-            GROQ_URL, 
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, 
-            json={"model": "llama-3.3-70b-versatile", "messages": full_messages},
-            timeout=25
-        )
+        res = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, json={"model": "llama-3.3-70b-versatile", "messages": full_messages}, timeout=25)
         bot_text = res.json()['choices'][0]['message']['content']
-    except Exception as e:
-        bot_text = f"Помилка ШІ: {str(e)}"
+    except Exception as e: bot_text = f"Помилка ШІ: {str(e)}"
 
-    # --- ВИКОНАННЯ ДІЙ ---
-    status_updates = ""
-
-    # 1. Пошук та Динамічний скріншот
-    if any(word in prompt.lower() for word in ["знайди", "ціни", "конкурент", "гугл", "скріншот"]):
-        search_data, found_url = global_search(prompt)
-        status_updates += f"\n\n**Аналіз ринку:**\n{search_data}"
+    status = ""
+    
+    # 2. Логіка виконання дій
+    # А. Перевіряємо, чи є пряме посилання в тексті
+    direct_url = extract_url_from_text(prompt)
+    
+    if direct_url:
+        # Якщо є посилання - йдемо прямо туди
+        path = browse_and_screenshot(direct_url)
+        tg_res = send_to_tg(f"Скріншот за посиланням: {direct_url}", path)
+        status += f"\n\n**[Посилання оброблено]** Telegram: {tg_res}"
         
-        # Визначаємо, який сайт фоткати: знайдений або r16 (якщо пошук не вдався)
-        target_to_screenshot = found_url if found_url else "https://r16.com.ua"
-        screenshot_path = browse_and_screenshot(target_to_screenshot)
-        
-        tg_status = send_to_tg(f"Звіт OpenClaw:\n{prompt}\n\nДжерело: {target_to_screenshot}", screenshot_path)
-        status_updates += f"\n\n**Telegram:** {tg_status}"
+    elif any(w in prompt.lower() for w in ["знайди", "гугл", "ціни", "конкурент"]):
+        # Якщо посилання немає - гуглимо
+        search_txt, found_url = global_search(prompt)
+        status += f"\n\n**[Пошук]** {search_txt[:200]}..."
+        if found_url:
+            path = browse_and_screenshot(found_url)
+            tg_res = send_to_tg(f"Результат пошуку: {prompt}\nURL: {found_url}", path)
+            status += f"\nTelegram: {tg_res}"
 
-    # 2. Робота з таблицями
     if "таблиц" in prompt.lower() or "запиши" in prompt.lower():
-        target_sheet = "R16_Pricelist"
-        if "clean_models" in prompt.lower():
-            target_sheet = "clean_models_for_photos_merged"
-        
-        sheet_res = access_any_sheet(target_sheet, row_data=["AI_ACTION", prompt[:100], "Виконано"])
-        status_updates += f"\n\n**Google Sheets:** {sheet_res}"
+        t_name = "clean_models_for_photos_merged" if "clean" in prompt.lower() else "R16_Pricelist"
+        res = access_any_sheet(t_name, ["AI_LOG", prompt, "Auto-Add"])
+        status += f"\n\n**[Таблиця]** {res}"
 
-    return bot_text + status_updates
+    return bot_text + status
