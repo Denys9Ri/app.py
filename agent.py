@@ -84,3 +84,24 @@ def ask_agent(prompt, messages_history=None):
         bot_text += f"\n\n[Системне: {status}]"
 
     return bot_text
+def send_to_tg(text, file_path=None):
+    token = os.environ.get("TG_TOKEN", "").strip()
+    chat_id = os.environ.get("TG_CHAT_ID", "").strip()
+    
+    if not token or not chat_id:
+        return "❌ Помилка: Токен або Chat ID не встановлені в Render!"
+        
+    url = f"https://api.telegram.org/bot{token}/"
+    try:
+        if file_path and os.path.exists(file_path):
+            with open(file_path, "rb") as f:
+                res = requests.post(url + "sendPhoto", data={"chat_id": chat_id, "caption": text}, files={"photo": f})
+        else:
+            res = requests.post(url + "sendMessage", json={"chat_id": chat_id, "text": text})
+        
+        if res.status_code == 200:
+            return "✅ Успішно надіслано в Telegram"
+        else:
+            return f"❌ Помилка Telegram: {res.text}" # Це покаже нам справжню причину
+    except Exception as e:
+        return f"❌ Помилка зв'язку: {str(e)}"
