@@ -1,8 +1,9 @@
-google-genai
 streamlit==1.42.0
-langchain==0.3.7
-langchain-community
-langchainhub
-playwright
+google-genai
 requests
-langchain-experimental
+playwright
+pytest-playwright
+gspread
+oauth2client
+telethon
+python-dotenv
