@@ -1,36 +1,25 @@
-# Використовуємо офіційний образ Python
-FROM python:3.11-slim
+# Використовуємо образ, який вже має частину залежностей
+FROM python:3.11-bullseye
 
-# Встановлюємо системні залежності для браузера
-RUN apt-get update && apt-get install -y \
+# Оновлюємо та встановлюємо тільки необхідні системні бібліотеки
+RUN apt-get update --fix-missing && apt-get install -y \
     wget \
-    gnupg \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    librandr2 \
-    libgbm1 \
-    libasound2 \
+    curl \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Робоча директорія
+# Встановлюємо робочу директорію
 WORKDIR /app
 
-# Копіюємо файли проекту
-COPY . .
-
-# Встановлюємо бібліотеки
+# Спочатку копіюємо вимоги, щоб кешувати встановлення бібліотек
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Встановлюємо браузер Playwright
+# Копіюємо решту проекту
+COPY . .
+
+# Встановлюємо Playwright та ВСІ його залежності автоматично
+# Ця команда сама знає, які бібліотеки потрібні для системи
 RUN playwright install chromium
 RUN playwright install-deps chromium
 
