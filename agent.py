@@ -2,38 +2,39 @@ import os
 import re
 import requests
 import json
+import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from playwright.sync_api import sync_playwright
 
-# --- КОНФІГУРАЦІЯ (Беремо з Render) ---
+# --- КОНФІГУРАЦІЯ ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY")
 TG_TOKEN = os.environ.get("TG_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 GOOGLE_CREDS = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# --- ІНСТРУМЕНТ: ТЕЛЕГРАМ ---
+# --- ТЕЛЕГРАМ ---
 def send_to_tg(text, file_path=None):
     if not TG_TOKEN or not TG_CHAT_ID: return "❌ Немає ключів ТГ"
     url = f"https://api.telegram.org/bot{TG_TOKEN.strip()}/"
     try:
-        # Telegram має ліміт на довжину тексту, тому ріжемо якщо задовгий
+        # Обрізаємо довгий текст
         if len(text) > 4000: text = text[:4000] + "... (обрізано)"
-
+        
         if file_path and os.path.exists(file_path):
             with open(file_path, "rb") as f:
                 requests.post(url + "sendPhoto", data={"chat_id": TG_CHAT_ID.strip(), "caption": text[:1000]}, files={"photo": f}, timeout=60)
-            # Видаляємо файл після відправки, щоб не забивати пам'ять
-            try: os.remove(file_path)
+            try: os.remove(file_path) # Чистимо за собою
             except: pass
         else:
             requests.post(url + "sendMessage", json={"chat_id": TG_CHAT_ID.strip(), "text": text}, timeout=15)
         return "✅ Надіслано"
     except Exception as e: return f"❌ Помилка ТГ: {str(e)}"
 
-# --- ІНСТРУМЕНТ: СИНХРОНІЗАЦІЯ ПРАЙСІВ (Batch Update) ---
+# ==========================================
+# МОДУЛЬ 1: СИНХРОНІЗАЦІЯ ПРАЙСІВ (Sheet -> Sheet)
+# ==========================================
 def sync_tire_prices(supplier_sheet_name, master_sheet_name):
     if not GOOGLE_CREDS: return "❌ Немає доступу до Google"
     
@@ -43,191 +44,202 @@ def sync_tire_prices(supplier_sheet_name, master_sheet_name):
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
-        # 1. Відкриваємо таблиці
+        # Відкриваємо таблиці
         try:
-            sup_book = client.open(supplier_sheet_name)
-            sup_sheet = sup_book.worksheet("Шини Легкові") # Важливо: точна назва листа
-            
-            master_book = client.open(master_sheet_name)
-            master_sheet = master_book.sheet1
-        except Exception as e:
-            return f"❌ Не знайшов таблицю або лист. Помилка: {str(e)}"
+            sup_sheet = client.open(supplier_sheet_name).worksheet("Шини Легкові")
+            master_sheet = client.open(master_sheet_name).sheet1
+        except Exception as e: return f"❌ Помилка відкриття таблиць: {str(e)}"
 
-        # 2. Скачуємо ВСІ дані (це 1 запит)
-        print("📥 Скачую прайси...")
+        # Скачуємо дані
         sup_data = sup_sheet.get_all_values()
         mast_data = master_sheet.get_all_values()
 
         if len(sup_data) < 2: return "❌ Файл постачальника порожній."
 
-        # 3. Підготовка Майстер-даних
-        header = mast_data[0] # Зберігаємо шапку (Бренд, Модель, ...)
-        existing_rows = mast_data[1:] # Дані без шапки
-        
-        # Створюємо мапу для швидкого пошуку: Ключ (Модель+Розмір) -> Індекс в списку
+        # Мапинг існуючих даних
+        header = mast_data[0]
+        existing_rows = mast_data[1:]
         mast_map = {}
         for idx, row in enumerate(existing_rows):
             if len(row) > 2:
-                # Нормалізуємо ключ: маленькі літери, без пробілів
                 key = (str(row[1]).strip().lower() + str(row[2]).strip().lower())
                 mast_map[key] = idx
 
         updated_count = 0
         new_items = []
 
-        # 4. Проходимо по Постачальнику (в пам'яті)
-        for s_row in sup_data[1:]: # Пропускаємо шапку постачальника
-            # Перевірка на цілісність рядка (мінімум колонок) та наявність назви товару
+        # Обробка даних постачальника
+        for s_row in sup_data[1:]:
             if len(s_row) < 9 or not s_row[5]: continue 
 
-            # ОЧИСТКА ЗАЛИШКУ: "20<" -> "20", "В дорозі" -> "0"
+            # Очистка
             raw_qty = str(s_row[8]).replace('>', '').replace('<', '').replace(' ', '').strip()
-            qty = "".join(filter(str.isdigit, raw_qty))
-            if not qty: qty = "0"
-
-            # ОЧИСТКА ЦІНИ: замінюємо коми на крапки якщо треба
+            qty = "".join(filter(str.isdigit, raw_qty)) or "0"
             price = str(s_row[7]).replace(',', '.').strip()
 
-            # ФОРМУВАННЯ КЛЮЧА (Товар + Типорозмір)
             key = (str(s_row[5]).strip().lower() + str(s_row[3]).strip().lower())
 
             if key in mast_map:
-                # --- ОНОВЛЕННЯ ІСНУЮЧОГО ---
+                # Оновлення
                 row_idx = mast_map[key]
-                # Оновлюємо тільки Ціну (Індекс 4 / Col E) та Кількість (Індекс 5 / Col F)
-                # Перевіряємо, чи змінились дані, щоб дарма не рахувати
                 if existing_rows[row_idx][4] != price or existing_rows[row_idx][5] != qty:
                     existing_rows[row_idx][4] = price
                     existing_rows[row_idx][5] = qty
                     updated_count += 1
             else:
-                # --- ДОДАВАННЯ НОВОГО ---
-                # Формуємо рядок під твою структуру R16_Pricelist:
-                # A:Бренд, B:Модель, C:Типорозмір, D:Сезон, E:Ціна, F:К-сть, G:Країна, H:Рік, ...
-                new_row = [
-                    s_row[6],  # A: Бренд (з G постачальника)
-                    s_row[5],  # B: Модель (з F)
-                    s_row[3],  # C: Розмір (з D)
-                    s_row[2],  # D: Сезон (з C)
-                    price,     # E: Ціна (з H)
-                    qty,       # F: К-сть (з I)
-                    s_row[1],  # G: Країна (з B)
-                    "2025",    # H: Рік (Дефолт)
-                    "", "", "Не шип", "Легковий" # I, J, K, L (Дефолт)
-                ]
+                # Новий рядок
+                new_row = [s_row[6], s_row[5], s_row[3], s_row[2], price, qty, s_row[1], "2025", "", "", "Не шип", "Легковий"]
                 new_items.append(new_row)
 
-        # 5. ЗАПИС ДАНИХ (Batch Update - 1 запит)
-        print("💾 Зберігаю дані...")
+        # Batch Update (Швидкий запис)
         final_data = [header] + existing_rows + new_items
-        
-        # Очищуємо лист і записуємо нові дані повністю
         master_sheet.clear()
         master_sheet.update('A1', final_data)
 
-        return f"✅ Прайси оновлено!\nЗмінено цін/залишків: {updated_count}\nДодано нових товарів: {len(new_items)}"
+        return f"✅ Прайси синхронізовано!\nОновлено: {updated_count}\nДодано нових: {len(new_items)}"
 
-    except Exception as e:
-        return f"❌ Критична помилка синхронізації: {str(e)}"
+    except Exception as e: return f"❌ Помилка синхронізації: {str(e)}"
 
-# --- ІНСТРУМЕНТ: УНІВЕРСАЛЬНИЙ БРАУЗЕР (Вхід + Дії + Popup Killer) ---
-def universal_browser_action(url, login=None, password=None, search_query=None):
+# ==========================================
+# МОДУЛЬ 2: ІМПОРТ В АДМІНКУ (Excel -> Site)
+# ==========================================
+def download_excel(sheet_name):
+    if not GOOGLE_CREDS: return None, "❌ Немає доступу до Google"
+    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_CREDS), ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+        client = gspread.authorize(creds)
+        target = next((s for s in client.openall() if sheet_name.lower() in s.title.lower()), None)
+        
+        if not target: return None, f"❌ Таблицю '{sheet_name}' не знайдено."
+
+        df = pd.DataFrame(target.sheet1.get_all_records())
+        file_path = "pricelist_import.xlsx"
+        df.to_excel(file_path, index=False)
+        return file_path, f"✅ Файл '{file_path}' підготовлено."
+    except Exception as e: return None, f"❌ Помилка Excel: {str(e)}"
+
+def run_complex_import(url, login, password, file_path):
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1920, "height": 1080}, locale="uk-UA")
             page = context.new_page()
+            report = ""
+
+            # 1. Логін
+            print(f"🔑 Вхід в адмінку: {url}")
+            page.goto(url, timeout=60000)
+            try:
+                page.fill('input[name*="login"], input[name*="user"]', login)
+                page.fill('input[type="password"]', password)
+                page.press('input[type="password"]', "Enter")
+                page.wait_for_timeout(5000)
+            except Exception as e: return None, f"❌ Не вдалося залогінитись: {e}"
+
+            # 2. Навігація (Products -> Import)
+            try:
+                page.goto(f"{url.rstrip('/')}/product/import", timeout=15000)
+                page.wait_for_timeout(2000)
+                if not page.locator('input[type="file"]').is_visible():
+                    # Якщо пряме посилання не спрацювало, шукаємо в меню
+                    if page.locator("text=Products").is_visible(): page.click("text=Products")
+                    if page.locator("text=Import").is_visible(): page.click("text=Import")
+            except: pass
             
-            print(f"🌍 Заходжу на: {url}")
-            page.goto(url, timeout=60000, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000)
+            if not page.locator('input[type="file"]').is_visible():
+                page.screenshot(path="nav_error.png")
+                return "nav_error.png", "❌ Не знайшов сторінку імпорту."
 
-            # --- POPUP KILLER (Закриваємо мовні вікна) ---
-            popups = ["text=Українська", "text=UA", "text=Зрозуміло", "text=Прийняти", "button[aria-label='Close']"]
-            for p_sel in popups:
-                try: 
-                    if page.locator(p_sel).first.is_visible(): 
-                        page.locator(p_sel).first.click()
-                        page.wait_for_timeout(500)
-                except: pass
-
-            # --- АВТО-ЛОГІН (Якщо є дані) ---
-            if login and password:
+            # 3. Цикл завантаження (1-1000, 1000-2000...)
+            ranges = [(1, 1000), (1000, 2000), (2000, 3500)]
+            
+            for start, end in ranges:
+                report += f"\n📦 Партія {start}-{end}: "
                 try:
-                    # Шукаємо поля
-                    page.fill('input[name*="login"], input[name*="user"], input[name*="email"]', login)
-                    page.fill('input[type="password"]', password)
-                    page.press('input[type="password"]', "Enter")
-                    page.wait_for_timeout(5000)
-                except Exception as e: print(f"Логін не вдався: {e}")
+                    page.set_input_files('input[type="file"]', file_path)
+                    
+                    # Шукаємо поля введення (Start/End)
+                    inputs = page.locator('input[type="number"], input[type="text"]').all()
+                    filled = 0
+                    for inp in inputs:
+                        if filled >= 2: break
+                        if inp.is_visible() and "login" not in str(inp.get_attribute("name")):
+                            inp.fill(str(start) if filled == 0 else str(end))
+                            filled += 1
+                    
+                    # Тиснемо кнопку
+                    btn = page.locator('button:has-text("Import"), input[type="submit"], button:has-text("Завантажити")').first
+                    if btn.is_visible():
+                        btn.click()
+                        page.wait_for_timeout(20000) # Чекаємо обробку
+                        report += "✅ OK"
+                    else: report += "❌ Немає кнопки"
+                except Exception as e: report += f"❌ Помилка: {e}"
 
-            # --- ПОШУК (Якщо треба) ---
-            if search_query:
-                try:
-                    page.fill('input[name="q"], input[name="search"], input[type="search"]', search_query)
-                    page.press('input[name="q"], input[name="search"], input[type="search"]', "Enter")
-                    page.wait_for_timeout(3000)
-                except: pass
+            path = "import_result.png"
+            page.screenshot(path=path)
+            browser.close()
+            return path, report
 
-            path = "web_result.png"
-            page.screenshot(path=path, full_page=False)
+    except Exception as e: return None, f"❌ Критична помилка: {str(e)}"
+
+# ==========================================
+# МОДУЛЬ 3: УНІВЕРСАЛЬНИЙ БРАУЗЕР (Для всього іншого)
+# ==========================================
+def universal_browser_action(url):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=60000)
+            path = "web_screen.png"
+            page.screenshot(path=path)
             browser.close()
             return path
-    except Exception as e: return None
+    except: return None
 
-# --- ГОЛОВНИЙ АГЕНТ (ОБРОБКА ЗАПИТІВ) ---
+# ==========================================
+# ГОЛОВНИЙ МОЗОК
+# ==========================================
 def ask_agent(prompt, messages_history=None):
-    ua_context = (
-        "Ти — OpenClaw, автономний менеджер R16.com.ua. "
-        "Твоя головна задача — керувати даними та браузером. "
-        "Якщо користувач пише 'онови прайси' — ти ТІЛЬКИ запускаєш функцію синхронізації, сам нічого не вигадуй. "
-        "Повідомляй про початок роботи."
-    )
+    ua_context = "Ти — техпрацівник R16. В тебе є 3 функції: sync_tire_prices, run_complex_import, universal_browser_action."
     
-    messages = [{"role": "system", "content": ua_context}]
-    if messages_history: messages.extend(messages_history)
-    messages.append({"role": "user", "content": prompt})
-    
-    # Спочатку відповідаємо користувачу (текст)
+    # Відповідь ШІ
     try:
-        res = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, 
-                            json={"model": "llama-3.3-70b-versatile", "messages": messages}, timeout=20)
-        bot_text = res.json()['choices'][0]['message']['content']
-    except: bot_text = "Прийнято в роботу."
+        requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, json={"model": "llama-3.3-70b-versatile", "messages": [{"role":"system", "content": ua_context}, {"role":"user", "content": prompt}]}, timeout=5)
+    except: pass
 
-    status_report = ""
-    
-    # 1. СИНХРОНІЗАЦІЯ ПРАЙСІВ
+    status = ""
+
+    # 1. СИНХРОНІЗАЦІЯ ПРАЙСІВ (Таблиця -> Таблиця)
     if "онови" in prompt.lower() and "прайс" in prompt.lower():
-        status_report += "\n\n⚙️ **Запускаю процес оновлення таблиць...**\n(Це може зайняти до 30 секунд)"
-        # Викликаємо Python-функцію
-        res_sync = sync_tire_prices("ExcelPriceTiresNew", "R16_Pricelist")
-        status_report += f"\n{res_sync}"
-        
-        # Надсилаємо звіт в ТГ, щоб ти точно побачив
-        send_to_tg(f"Звіт по прайсах:\n{res_sync}")
+        status += "\n\n🔄 **Синхронізація таблиць...**"
+        res = sync_tire_prices("ExcelPriceTiresNew", "R16_Pricelist")
+        status += f"\n{res}"
+        send_to_tg(f"Звіт синхронізації:\n{res}")
 
-    # 2. БРАУЗЕР (URL з тексту)
-    url_match = re.search(r'https?://[^\s]+', prompt)
-    if url_match:
-        url = url_match.group(0)
-        
-        # Витягуємо логін/пароль якщо є
-        login, password = None, None
-        if "логін:" in prompt.lower():
-            try: login = prompt.split("логін:")[1].split(",")[0].strip()
-            except: pass
-        if "пароль:" in prompt.lower():
-            try: password = prompt.split("пароль:")[1].split()[0].strip()
-            except: pass
+    # 2. ЗАВАНТАЖЕННЯ НА САЙТ (Таблиця -> Адмінка)
+    elif "загрузи" in prompt.lower() and "сайт" in prompt.lower():
+        status += "\n\n🚀 **Імпорт на сайт...**"
+        excel_path, msg = download_excel("R16_Pricelist")
+        if excel_path:
+            # Дані для входу
+            login = "adminRia"
+            password = "Baitrens!29"
+            if "логін:" in prompt.lower():
+                 try: login = prompt.split("логін:")[1].split()[0].strip()
+                 except: pass
             
-        status_report += f"\n\n🌍 **Заходжу на сайт: {url}**"
-        path = universal_browser_action(url, login, password)
-        
-        if path:
-            tg_msg = send_to_tg(f"Скріншот сайту: {url}", path)
-            status_report += f"\n📸 Скріншот надіслано в Telegram ({tg_msg})"
-        else:
-            status_report += "\n❌ Не вдалося зробити скріншот."
+            screen, report = run_complex_import("https://r16.com.ua/admin/", login, password, excel_path)
+            status += f"\n{report}"
+            if screen: send_to_tg(f"Звіт імпорту:\n{report}", screen)
+        else: status += f"\n{msg}"
 
-    return bot_text + status_report
+    # 3. ПРОСТО ЗАЙТИ НА САЙТ
+    elif "http" in prompt and "загрузи" not in prompt:
+        url = re.search(r'https?://[^\s]+', prompt).group(0)
+        path = universal_browser_action(url)
+        if path: send_to_tg(f"Скріншот: {url}", path)
+        status += "\n📸 Скріншот надіслано."
+
+    return "Задача виконується. Звіт у Telegram." + status
