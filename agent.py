@@ -2,37 +2,41 @@ import os
 import requests
 import json
 
-# ТВІЙ НОВИЙ КЛЮЧ
-API_KEY = "AIzaSyCBYGHcVzH1kA6U1nuh27m2kYV6HS2KvQU"
-# ЗМІНЮЄМО НА v1beta ТА gemini-1.5-pro
-URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
+# ТВІЙ НОВИЙ КЛЮЧ GROQ
+GROQ_API_KEY = "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"
+URL = "https://api.groq.com/openai/v1/chat/completions"
 
 def ask_agent(prompt):
     headers = {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': API_KEY 
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
     }
     
-    # Твій контекст для OpenClaw
-    ua_context = "Ти — OpenClaw, менеджер R16.com.ua. Відповідай українською."
+    # Твій контекст: ти власник, магазин R16
+    ua_context = (
+        "Ти — OpenClaw, автономний ШІ-менеджер магазину шин R16.com.ua. "
+        "Твоя мета: допомагати клієнтам підбирати шини та займатися маркетингом. "
+        "Відповідай українською мовою, будь професійним та привітним."
+    )
     
     data = {
-        "contents": [{
-            "parts": [{"text": f"{ua_context}\n\nЗавдання: {prompt}"}]
-        }]
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": ua_context},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.7
     }
 
     try:
-        # Використовуємо трохи довший timeout, бо Pro версія думає глибше
-        response = requests.post(URL, headers=headers, json=data, timeout=25)
+        response = requests.post(URL, headers=headers, json=data, timeout=15)
         res_json = response.json()
 
         if response.status_code == 200:
-            return res_json['candidates'][0]['content']['parts'][0]['text']
+            # Повертаємо чисту відповідь асистента
+            return res_json['choices'][0]['message']['content']
         else:
-            # Виводимо чисту причину від Google
-            error_msg = res_json.get('error', {}).get('message', 'No details')
-            return f"❌ Помилка Google (Status {response.status_code}): {error_msg}"
+            return f"❌ Помилка Groq: {res_json.get('error', {}).get('message', 'Unknown error')}"
             
     except Exception as e:
         return f"❌ Помилка з'єднання: {str(e)}"
