@@ -7,3 +7,4 @@ gspread
 oauth2client
 telethon
 python-dotenv
+openpyxl
