@@ -28,152 +28,157 @@ def send_to_tg(text, file_path=None):
         return "✅ Надіслано"
     except Exception as e: return f"❌ Помилка ТГ: {str(e)}"
 
-# --- ФУНКЦІЯ СИНХРОНІЗАЦІЇ ПРАЙСІВ (СЕРЦЕ ЛОГІКИ) ---
+# --- ФУНКЦІЯ СИНХРОНІЗАЦІЇ ПРАЙСІВ (ОНОВЛЕНА ПІД ТВОЮ СТРУКТУРУ) ---
 def sync_tire_prices(supplier_sheet_name, master_sheet_name):
     if not GOOGLE_CREDS: return "❌ Немає доступу до Google"
     
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_CREDS), ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"])
+        creds_dict = json.loads(GOOGLE_CREDS)
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         
         # 1. Відкриваємо таблиці
         try:
-            supplier_sheet = client.open(supplier_sheet_name).sheet1
-            master_sheet = client.open(master_sheet_name).sheet1
-        except:
-            return f"❌ Не знайшов одну з таблиць: {supplier_sheet_name} або {master_sheet_name}"
+            # Відкриваємо постачальника на конкретному листі "Шини Легкові"
+            sup_book = client.open(supplier_sheet_name)
+            sup_sheet = sup_book.worksheet("Шини Легкові") 
+            
+            master_book = client.open(master_sheet_name)
+            master_sheet = master_book.sheet1
+        except Exception as e:
+            return f"❌ Не знайшов таблиці або лист: {str(e)}"
 
-        # 2. Скачуємо дані в Pandas
-        print("📥 Скачую дані...")
-        data_sup = supplier_sheet.get_all_records()
-        data_mast = master_sheet.get_all_records()
-        
-        df_sup = pd.DataFrame(data_sup)
-        df_mast = pd.DataFrame(data_mast)
+        # 2. Скачуємо дані
+        sup_data = sup_sheet.get_all_values()
+        mast_data = master_sheet.get_all_values()
 
-        if df_sup.empty: return "❌ Файл постачальника порожній."
-        
-        # 3. Очистка даних (Прибираємо < >)
-        def clean_stock(val):
-            s = str(val).replace('<', '').replace('>', '').replace(' ', '')
-            return s if s.isdigit() else s
+        if len(sup_data) < 2: return "❌ Файл постачальника порожній."
 
-        # Припускаємо назви колонок (ЯКЩО ВОНИ ІНШІ - БОТ ПОМИЛИТЬСЯ, ТРЕБА ПЕРЕВІРИТИ!)
-        # Спробуємо знайти колонки, схожі на "Залишок" або "Наявність"
-        stock_col_sup = next((c for c in df_sup.columns if "наявн" in c.lower() or "залиш" in c.lower() or "qty" in c.lower()), None)
-        price_col_sup = next((c for c in df_sup.columns if "ціна" in c.lower() or "price" in c.lower()), None)
-        
-        if stock_col_sup:
-            df_sup[stock_col_sup] = df_sup[stock_col_sup].apply(clean_stock)
+        # Словник твого файлу для швидкого пошуку (Ключ: назва + розмір)
+        mast_map = {}
+        for idx, row in enumerate(mast_data[1:], start=2):
+            if len(row) > 2:
+                # Ключ: Модель(B) + Типорозмір(C) в нижньому регістрі
+                key = (str(row[1]).strip().lower() + str(row[2]).strip().lower())
+                mast_map[key] = idx
 
-        # 4. Логіка порівняння
-        # Створюємо "Ключ" для пошуку: Бренд + Модель + Розмір (без пробілів і в нижньому регістрі)
-        # УВАГА: Це спрацює, якщо в обох таблицях є колонки "Бренд", "Модель", "Розмір"
-        # Якщо колонки називаються інакше, треба підправити код.
-        
         updated_count = 0
-        new_items_count = 0
-        
-        # Конвертуємо майстер-таблицю в словник для швидкого пошуку
-        # Ключ = рядок з параметрами, Значення = індекс рядка
-        # (Це спрощена логіка, для точності треба знати точні назви колонок)
-        
-        # Оскільки ми не знаємо точних назв колонок, зробимо розумний апдейт
-        # Ми просто пройдемось по файлу Постачальника і спробуємо знайти такий же товар у Майстра
-        
-        report = []
-        
-        # Це складний момент без бачення файлу. 
-        # Давай зробимо так: Ми просто оновимо існуючі і додамо нові
-        # Але щоб не поламати структуру, краще просто додати нові вниз, а старі оновити.
-        
-        # --- ВАРІАНТ "ПРОСТИЙ": Перезапис ---
-        # Але ти просив зберегти структуру.
-        # Тому ми будемо шукати співпадіння.
-        
-        log = "Початок обробки...\n"
-        
-        # Перетворюємо DataFrames назад у список словників для зручності
-        master_records = df_mast.to_dict('records')
-        supplier_records = df_sup.to_dict('records')
-        
-        # Створюємо мапу майстер-товарів для швидкості
-        # Припускаємо, що перші 3 колонки - це ідентифікатори (Бренд, Модель, Розмір)
-        master_map = {}
-        for idx, row in enumerate(master_records):
-            # Створюємо унікальний ключ з перших 3 значень рядка (зазвичай це бренд, модель, розмір)
-            key = "".join([str(v).lower().strip() for k,v in list(row.items())[:3]])
-            master_map[key] = idx
+        new_items = []
 
-        updates_batch = [] # Список змін для batch_update
-        
-        # Проходимо по постачальнику
-        for row in supplier_records:
-            # Формуємо такий самий ключ
-            key = "".join([str(v).lower().strip() for k,v in list(row.items())[:3]])
-            
-            # Шукаємо відповідні колонки Ціни та Залишку у Постачальника
-            sup_price = row.get(price_col_sup) if price_col_sup else list(row.values())[-2] # Гадаємо, що ціна передостання
-            sup_stock = row.get(stock_col_sup) if stock_col_sup else list(row.values())[-1] # Гадаємо, що залишок останній
-            
-            if key in master_map:
-                # ТОВАР ІСНУЄ -> ОНОВЛЮЄМО
-                row_idx = master_map[key]
-                # Оновлюємо в пам'яті (тут треба знати імена колонок у Майстра)
-                # Припустимо, що в Майстра ціна і залишок теж мають схожі назви
-                master_records[row_idx]['Ціна'] = sup_price # Тут може бути помилка назви!
-                master_records[row_idx]['Наявність'] = sup_stock
+        # 3. Обробка рядків постачальника
+        for s_row in sup_data[1:]:
+            if len(s_row) < 9 or not s_row[5]: continue # Пропуск порожніх
+
+            # Очистка залишку (20< -> 20)
+            raw_qty = str(s_row[8]).replace('>', '').replace('<', '').strip()
+            qty = "".join(filter(str.isdigit, raw_qty))
+            if not qty: qty = "0"
+
+            # Створюємо рядок за ТВОЄЮ структурою (Скрін 11)
+            # A:Бренд(G), B:Модель(F), C:Типорозмір(D), D:Сезон(C), E:Ціна(H), F:Кол-во(I), G:Країна(B)
+            new_row = [
+                s_row[6],  # A: Бренд (Виробник у пост.)
+                s_row[5],  # B: Модель (Товар у пост.)
+                s_row[3],  # C: Типорозмір
+                s_row[2],  # D: Сезон (Сезонність у пост.)
+                s_row[7],  # E: Ціна (Ваша ціна у пост.)
+                qty,       # F: Кол-во (Залишок у пост.)
+                s_row[1],  # G: Країна
+                "2025",    # H: Рік
+                "", "", "Не шип", "Легковий" # Інші колонки дефолтні
+            ]
+
+            key = (str(new_row[1]).strip().lower() + str(new_row[2]).strip().lower())
+
+            if key in mast_map:
+                # ОНОВЛЮЄМО ІСНУЮЧИЙ (Ціна в E/5, Кількість в F/6)
+                row_num = mast_map[key]
+                master_sheet.update_cell(row_num, 5, new_row[4])
+                master_sheet.update_cell(row_num, 6, new_row[5])
                 updated_count += 1
             else:
-                # ТОВАР НОВИЙ -> ДОДАЄМО
-                master_records.append(row)
-                new_items_count += 1
+                # ДОДАЄМО НОВИЙ
+                new_items.append(new_row)
 
-        # 5. Заливаємо назад у Google Sheets
-        # Очищуємо стару і вставляємо нову (це найшвидший спосіб зберегти порядок)
-        master_sheet.clear()
-        # Відновлюємо заголовки
-        master_sheet.update([df_mast.columns.values.tolist()] + [list(r.values()) for r in master_records])
-        
-        return f"✅ Оброблено! Оновлено товарів: {updated_count}. Додано нових: {new_items_count}."
-        
+        if new_items:
+            master_sheet.append_rows(new_items)
+
+        return f"✅ Синхронізація завершена! Оновлено: {updated_count}. Додано нових: {len(new_items)}."
+
     except Exception as e:
-        return f"❌ Помилка обробки прайсів: {str(e)}\n(Перевір, чи назви колонок 'Ціна' та 'Наявність' співпадають)"
+        return f"❌ Помилка: {str(e)}"
 
-# --- БРАУЗЕР ТА ІНШІ ІНСТРУМЕНТИ ---
-def universal_browser_action(url, login=None, password=None, file_to_upload=None):
-    # ... (Твій код браузера з попереднього повідомлення без змін) ...
-    # Щоб не дублювати тут великий шматок, встав сюди код функції universal_browser_action з минулої відповіді
-    pass 
-    # (Але якщо ти копіюєш весь файл - я дам повну версію нижче)
+# --- УНІВЕРСАЛЬНИЙ БРАУЗЕР (Вхід + Дії) ---
+def universal_browser_action(url, login=None, password=None, search_query=None):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 1920, "height": 1080})
+            page = context.new_page()
+            page.goto(url, timeout=60000)
+            
+            # Popup killer (мова)
+            for sel in ["text=Українська", "text=UA", "text=Зрозуміло"]:
+                try: 
+                    if page.locator(sel).is_visible(): page.locator(sel).first.click()
+                except: pass
 
-# --- ПОВНА ВЕРСІЯ СКРИПТА ---
-# Щоб тобі було зручно, я даю код ПОВНІСТЮ зібраний нижче.
+            if login and password:
+                # Спроба логіна
+                try:
+                    page.fill('input[name*="login"], input[name*="user"]', login)
+                    page.fill('input[type="password"]', password)
+                    page.press('input[type="password"]', "Enter")
+                    page.wait_for_timeout(5000)
+                except: pass
 
+            if search_query:
+                try:
+                    page.fill('input[type="search"], input[name="q"]', search_query)
+                    page.press('input[type="search"], input[name="q"]', "Enter")
+                    page.wait_for_timeout(3000)
+                except: pass
+
+            path = "web_result.png"
+            page.screenshot(path=path)
+            browser.close()
+            return path
+    except Exception as e: return None
+
+# --- ГОЛОВНИЙ АГЕНТ ---
 def ask_agent(prompt, messages_history=None):
     ua_context = (
-        "Ти — OpenClaw. Якщо просять оновити прайси — ВИКЛИКАЙ функцію синхронізації. "
-        "Не фантазуй, що ти це зробив. Скажи: 'Запускаю процес синхронізації...' і чекай результат від коду."
+        "Ти — OpenClaw, автономний асистент R16.com.ua. "
+        "Якщо просять оновити прайси — запускай sync_tire_prices. "
+        "Якщо є посилання — використовуй universal_browser_action."
     )
-    full_messages = [{"role": "system", "content": ua_context}]
-    if messages_history: full_messages.extend(messages_history)
-    full_messages.append({"role": "user", "content": prompt})
+    
+    messages = [{"role": "system", "content": ua_context}]
+    if messages_history: messages.extend(messages_history)
+    messages.append({"role": "user", "content": prompt})
     
     try:
-        res = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, json={"model": "llama-3.3-70b-versatile", "messages": full_messages}, timeout=20)
+        res = requests.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, 
+                            json={"model": "llama-3.3-70b-versatile", "messages": messages}, timeout=20)
         bot_text = res.json()['choices'][0]['message']['content']
-    except: bot_text = "..."
+    except: bot_text = "Працюю..."
 
-    status_report = ""
-
-    # ЛОГІКА СИНХРОНІЗАЦІЇ
+    status = ""
+    
+    # 1. Логіка прайсів
     if "онови" in prompt.lower() and "прайс" in prompt.lower():
-        status_report += "\n\n🔄 **Починаю реальну синхронізацію таблиць...**"
-        # Тут ми викликаємо Python-код, а не просто балакаємо
-        result_msg = sync_tire_prices("ExcelPriceTiresNew", "R16_Pricelist")
-        status_report += f"\n{result_msg}"
+        status += "\n\n🔄 **Запускаю реальну синхронізацію...**"
+        res_sync = sync_tire_prices("ExcelPriceTiresNew", "R16_Pricelist")
+        status += f"\n{res_sync}"
 
-    # ЛОГІКА БРАУЗЕРА (Стара)
-    # ... (тут залишається код для браузера) ...
+    # 2. Логіка браузера
+    url_match = re.search(r'https?://[^\s]+', prompt)
+    if url_match:
+        url = url_match.group(0)
+        status += f"\n\n🌍 **Заходжу на сайт...**"
+        path = universal_browser_action(url)
+        tg_msg = send_to_tg(f"Скріншот для Дениса: {url}", path)
+        status += f"\nTelegram: {tg_msg}"
 
-    return bot_text + status_report
+    return bot_text + status
