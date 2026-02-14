@@ -1,42 +1,46 @@
-import os
 import requests
 import json
 
-# ТВІЙ НОВИЙ КЛЮЧ GROQ
 GROQ_API_KEY = "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"
 URL = "https://api.groq.com/openai/v1/chat/completions"
 
-def ask_agent(prompt):
+# Додаємо параметр messages_history
+def ask_agent(prompt, messages_history=None):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
-    # Твій контекст: ти власник, магазин R16
     ua_context = (
-        "Ти — OpenClaw, автономний ШІ-менеджер магазину шин R16.com.ua. "
-        "Твоя мета: допомагати клієнтам підбирати шини та займатися маркетингом. "
-        "Відповідай українською мовою, будь професійним та привітним."
+        "Ти — OpenClaw, автономний менеджер магазину R16.com.ua. "
+        "Ти пам'ятаєш деталі розмови. Якщо клієнт каже 'Зима', "
+        "ти маєш пам'ятати, яке в нього авто, якщо він казав це раніше."
     )
+    
+    # Формуємо список повідомлень для Groq
+    full_messages = [{"role": "system", "content": ua_context}]
+    
+    # Якщо історія є, додаємо її в запит
+    if messages_history:
+        for msg in messages_history:
+            role = "user" if msg["role"] == "user" else "assistant"
+            full_messages.append({"role": role, "content": msg["content"]})
+    
+    # Додаємо поточне повідомлення
+    full_messages.append({"role": "user", "content": prompt})
     
     data = {
         "model": "llama-3.3-70b-versatile",
-        "messages": [
-            {"role": "system", "content": ua_context},
-            {"role": "user", "content": prompt}
-        ],
+        "messages": full_messages,
         "temperature": 0.7
     }
 
     try:
         response = requests.post(URL, headers=headers, json=data, timeout=15)
         res_json = response.json()
-
         if response.status_code == 200:
-            # Повертаємо чисту відповідь асистента
             return res_json['choices'][0]['message']['content']
         else:
-            return f"❌ Помилка Groq: {res_json.get('error', {}).get('message', 'Unknown error')}"
-            
+            return f"❌ Помилка: {res_json.get('error', {}).get('message', 'error')}"
     except Exception as e:
-        return f"❌ Помилка з'єднання: {str(e)}"
+        return f"❌ З'єднання: {str(e)}"
